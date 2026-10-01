@@ -42,14 +42,14 @@ sources:
     type: excel
     path: data/bronze/DCD-area-proypoblacion-dep-2005-2017_VP.xlsx
     sheet: 0
-    skiprows: null                      # TODO: filas de titulo antes del encabezado (revisar en el EDA)
+    header_starts: DP                   # el encabezado empieza en la celda "DP" (debajo de los titulos)
 
   # Proyecciones de poblacion departamental DANE (por area), 2018-2050
   poblacion_2018_2050:
     type: excel
     path: data/bronze/PPED-AreaDep-2018-2050_VP.xlsx
-    sheet: 0
-    skiprows: null                      # TODO: filas de titulo antes del encabezado (revisar en el EDA)
+    sheet: PobDepartamentalxÁrea        # la hoja 0 es el indice; los datos estan en esta
+    header_starts: DP
 
 # Fuentes que se unen fila a fila en gold. La poblacion NO se une por registro:
 # se usa despues, agregada por departamento y anio, para calcular tasas por 100.000 hab.

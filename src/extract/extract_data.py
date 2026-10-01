@@ -17,10 +17,20 @@ def extract_csv(ruta) -> pd.DataFrame:
     return df
 
 
-def extract_excel(ruta, sheet=0, skiprows=None) -> pd.DataFrame:
+def extract_excel(ruta, sheet=0, header_starts: str | None = None) -> pd.DataFrame:
     """Lee una hoja de Excel como texto. Requiere openpyxl.
-    skiprows: filas de titulo que hay antes del encabezado (comun en archivos del DANE)."""
-    df = pd.read_excel(project_path(ruta), sheet_name=sheet, skiprows=skiprows, dtype=str)
+    header_starts: texto de la primera celda del encabezado (ej. 'DP' en los archivos del
+    DANE). Se busca esa fila y se ignoran los titulos de arriba y las filas vacias."""
+    if header_starts is None:
+        df = pd.read_excel(project_path(ruta), sheet_name=sheet, dtype=str)
+    else:
+        crudo = pd.read_excel(project_path(ruta), sheet_name=sheet, header=None, dtype=str)
+        fila = crudo.index[crudo.iloc[:, 0].str.strip().eq(header_starts)]
+        if fila.empty:
+            raise ValueError(f"No se encontro la fila de encabezado '{header_starts}' en {ruta}")
+        df = crudo.loc[fila[0] + 1:].copy()
+        df.columns = crudo.loc[fila[0]].str.strip()
+        df = df.dropna(how="all").dropna(axis=1, how="all").reset_index(drop=True)
     logger.info(f"Extraido {ruta}: {df.shape[0]} filas, {df.shape[1]} columnas")
     return df
 
@@ -89,7 +99,7 @@ def extract_source(fuente: dict) -> pd.DataFrame:
     if tipo == "csv":
         return extract_csv(fuente["path"])
     if tipo == "excel":
-        return extract_excel(fuente["path"], fuente.get("sheet", 0), fuente.get("skiprows"))
+        return extract_excel(fuente["path"], fuente.get("sheet", 0), fuente.get("header_starts"))
     if tipo == "sql":
         return extract_sql(fuente["query"])
     if tipo == "api":
