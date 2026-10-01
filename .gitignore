@@ -1,0 +1,12 @@
+venv/
+.env
+__pycache__/
+.pytest_cache/
+.ipynb_checkpoints/
+logs/*.txt
+
+# Datos: bronze se descarga de la API / del DANE (ver README); silver y gold se generan
+data/bronze/*
+data/silver/*
+data/gold/*
+!data/**/.gitkeep

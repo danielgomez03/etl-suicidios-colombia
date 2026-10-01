@@ -1,0 +1,11 @@
+pandas
+requests
+numpy
+matplotlib
+pyyaml
+python-dotenv
+sqlalchemy
+openpyxl
+schedule
+pytest
+ipykernel
