@@ -24,45 +24,29 @@ period:
   start_year: 2015
   end_year: 2024
 
-# Una entrada por fuente. type: csv | excel | sql | api
+
 sources:
-  # Casos individuales de presunto suicidio (INMLCF) - 26.558 registros
   suicidios:
     type: api
     url: https://www.datos.gov.co/resource/f75u-mirk.json
-    token_env: SOCRATA_APP_TOKEN        # nombre de la variable en .env (no el token)
+    token_env: SOCRATA_APP_TOKEN     
     batch_size: 50000
     order: ":id"
-    raw_path: data/bronze/suicidios_raw.csv
-    use_cache: true                     # false = vuelve a descargar de la API
-    key: id
+    output: data/bronze/suicidios_raw.csv
 
-  # Proyecciones de poblacion departamental DANE (por area), retroproyeccion 2005-2017
-  poblacion_2005_2017:
+  poblacion_2005_2050:
     type: excel
-    path: data/bronze/DCD-area-proypoblacion-dep-2005-2017_VP.xlsx
+    path: data/bronze/DCD-area-proypoblacion-dep-2005-2050_VP.xlsx
     sheet: 0
-    header_starts: DP                   # el encabezado empieza en la celda "DP" (debajo de los titulos)
+    header_starts: DP                 
+    output: data/bronze/poblacion_2005_2050_raw.csv
 
-  # Proyecciones de poblacion departamental DANE (por area), 2018-2050
-  poblacion_2018_2050:
-    type: excel
-    path: data/bronze/PPED-AreaDep-2018-2050_VP.xlsx
-    sheet: PobDepartamentalxÁrea        # la hoja 0 es el indice; los datos estan en esta
-    header_starts: DP
 
-# Fuentes que se unen fila a fila en gold. La poblacion NO se une por registro:
-# se usa despues, agregada por departamento y anio, para calcular tasas por 100.000 hab.
-integration:
-  sources: [suicidios]
-  on: null
-  how: left
+silver:
+  rules:
+    fill_text: Sin informacion
+  formats:
+    date_formats: ["%Y-%m-%d", "%d/%m/%Y", "%m-%d-%Y", "%d-%b-%Y", "%B %d, %Y"]
 
-database:
-  gold_table: gold_suicidios
-
-formats:
-  date_formats: ["%Y-%m-%d", "%d/%m/%Y", "%m-%d-%Y", "%d-%b-%Y", "%B %d, %Y"]
-
-rules:
-  fill_text: Sin informacion
+gold:
+  table: gold_suicidios
