@@ -1,9 +1,9 @@
 project:
   name: Presuntos Suicidios Colombia 2015-2024
-  version: '0.1'
+  version: '0.2'
   description: Pipeline ETL con arquitectura medallon (bronze, silver, gold) para
     la base "Presuntos Suicidios. Colombia, 2015 a 2024. Cifras definitivas" (INMLCF)
-    y las proyecciones de poblacion departamental del DANE.
+    y las proyecciones de poblacion del DANE (departamental y municipal).
   authors:
   - Ana Maria Toro
   - Ana Sofia Perhueza
@@ -17,9 +17,22 @@ paths:
   silver_dir: data/silver
   gold_dir: data/gold
   logs_dir: logs
+  regiones: config/regiones.csv          # tabla maestra departamento -> region natural
 period:
   start_year: 2015
   end_year: 2024
+
+# Alcance del informe: nacional -> Valle del Cauca -> municipios foco del Valle
+scope:
+  departamento_foco: '76'                # Valle del Cauca
+  municipios_foco:                       # tasa municipal completa (excepcion acordada)
+    '76001': Cali
+    '76520': Palmira
+    '76109': Buenaventura
+    '76364': Jamundi
+    '76834': Tulua
+    '76111': Buga
+
 sources:
   suicidios:
     type: api
@@ -31,19 +44,57 @@ sources:
     key: id
     use_cache: true
     raw_path: data/bronze/suicidios_raw.csv
+  # Poblacion departamental por area (total) 2005-2050
   poblacion_2005_2050:
     type: excel
     path: data/bronze/DCD-area-proypoblacion-dep-2005-2050_VP.xlsx
     sheet: 0
     header_starts: DP
     output: data/bronze/poblacion_2005_2050_raw.csv
+  # Poblacion departamental por area, sexo y edad simple (denominador de tasas especificas)
+  poblacion_sexo_edad_2005_2017:
+    type: excel
+    path: data/bronze/DCD-area-sexo-edad-proypoblacion-dep-2005-2017_VP.xlsx
+    sheet: 0
+    header_starts: DP
+  poblacion_sexo_edad_2018_2050:
+    type: excel
+    path: data/bronze/PPED-AreaSexoEdadDep-2018-2050_VP.xlsx
+    sheet: PobDepartamentalxÁreaSexoEdad
+    header_starts: DP
+    header_rows: 2                       # encabezado en dos filas (Hombres 0 años, ...)
+  # Poblacion municipal por area (total)
+  poblacion_municipal_2005_2017:
+    type: excel
+    path: data/bronze/DCD-area-proypoblacion-Mun-2005-2017_VP.xlsx
+    sheet: 0
+    header_starts: DP
+  poblacion_municipal_2018_2042:
+    type: excel
+    path: data/bronze/PPED-AreaMun-2018-2042_VP.xlsx
+    sheet: PobMunicipalxÁrea
+    header_starts: DP
+
 integration:
   sources:
   - suicidios
   'on': null
   how: left
+
 database:
-  gold_table: gold_suicidios
+  gold_table: gold_suicidios             # detalle por caso (acceso restringido)
+
+# Umbrales de los KR y KPI (ver informe.ipynb, seccion OKR)
+thresholds:
+  kr1_pct_validos_min: 99.5              # % de registros que pasan las reglas obligatorias
+  kr2_pct_codigos_cruzan_min: 99.0       # % de codigos DANE que cruzan con la poblacion
+  kpi1_consistencia_meta: 99.0           # % de registros que pasan todas las reglas
+  kpi1_consistencia_alerta: 98.0
+  kpi3_completitud_verde: 95.0           # semaforo de completitud
+  kpi3_completitud_amarillo: 80.0
+  privacidad_min_casos: 5                # celdas con 1 a 4 casos se ocultan en el tablero
+  tasa_min_casos_estable: 20             # tasas con menos casos se marcan inestables
+
 formats:
   date_formats:
   - '%Y-%m-%d'

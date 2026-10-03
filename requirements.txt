@@ -9,3 +9,6 @@ openpyxl
 schedule
 pytest
 ipykernel
+psycopg2-binary
+nbclient
+nbformat

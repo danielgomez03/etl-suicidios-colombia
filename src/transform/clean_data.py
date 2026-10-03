@@ -210,9 +210,60 @@ def limpiar_poblacion_2005_2050(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     cols_pob = [c for c in df.columns if "poblacion" in c.lower() or "total" in c.lower()]
     return _limpiar_poblacion(df, cols_pob[0])
 
+PATRON_SEXO_EDAD = r"^(hombres|mujeres)_(\d+)(?:_anos?)?(?:_y_mas)?$"
+
+
+def limpiar_poblacion_sexo_edad(df: pd.DataFrame, config: dict) -> pd.DataFrame:
+    """Silver de las proyecciones departamentales por sexo y edad simple (DANE).
+
+    Formato largo: una fila por departamento, anio, sexo y edad simple (0 a 100 y mas),
+    solo area 'Total'. Sirve de denominador para tasas por sexo y grupo de edad.
+    Los dos archivos (2005-2017 y 2018-2050) quedan con el mismo esquema.
+    """
+    d = df.copy()
+    d = d[d["dp"].str.fullmatch(r"\d{2}", na=False) & d["area_geografica"].str.lower().eq("total")]
+
+    columnas = [c for c in d.columns if pd.Series([c]).str.fullmatch(PATRON_SEXO_EDAD).iloc[0]]
+    largo = d.melt(id_vars=["dp", "dpnom", "ano"], value_vars=columnas,
+                   var_name="columna", value_name="poblacion")
+    partes = largo["columna"].str.extract(PATRON_SEXO_EDAD)
+    largo["sexo"] = partes[0].map({"hombres": "Hombre", "mujeres": "Mujer"})
+    largo["edad"] = pd.to_numeric(partes[1]).astype("Int64")
+    largo["poblacion"] = pd.to_numeric(largo["poblacion"].str.replace(",", "", regex=False),
+                                       errors="coerce").astype("Int64")
+    largo["ano"] = pd.to_numeric(largo["ano"], errors="coerce").astype("Int64")
+    largo = largo.rename(columns={"dp": "codigo_dane", "dpnom": "departamento"})
+    largo = largo[["codigo_dane", "departamento", "ano", "sexo", "edad", "poblacion"]]
+
+    if largo["poblacion"].isna().any():
+        logger.warning(f"poblacion sexo/edad: {largo['poblacion'].isna().sum()} celdas sin valor")
+    if largo.duplicated(["codigo_dane", "ano", "sexo", "edad"]).any():
+        logger.warning("poblacion sexo/edad: filas repetidas por departamento, anio, sexo y edad")
+    return largo.reset_index(drop=True)
+
+
+def limpiar_poblacion_municipal(df: pd.DataFrame, config: dict) -> pd.DataFrame:
+    """Silver de las proyecciones municipales (DANE): una fila por municipio y anio, area 'Total'.
+    El codigo de municipio (5 digitos) esta en la columna MPIO en ambos archivos."""
+    d = df.copy()
+    d = d[d["mpio"].str.fullmatch(r"\d{5}", na=False) & d["area_geografica"].str.lower().eq("total")]
+    col_pob = "poblacion" if "poblacion" in d.columns else "total"
+    d["poblacion"] = pd.to_numeric(d[col_pob].str.replace(",", "", regex=False), errors="coerce").astype("Int64")
+    d["ano"] = pd.to_numeric(d["ano"], errors="coerce").astype("Int64")
+    d = d.rename(columns={"mpio": "codigo_municipio", "dpmp": "municipio", "dp": "codigo_dane"})
+    d = d[["codigo_dane", "codigo_municipio", "municipio", "ano", "poblacion"]]
+    if d.duplicated(["codigo_municipio", "ano"]).any():
+        logger.warning("poblacion municipal: mas de una fila por municipio y anio")
+    return d.reset_index(drop=True)
+
+
 LIMPIADORES = {
     "suicidios": limpiar_suicidios,
     "poblacion_2005_2050": limpiar_poblacion_2005_2050,
+    "poblacion_sexo_edad_2005_2017": limpiar_poblacion_sexo_edad,
+    "poblacion_sexo_edad_2018_2050": limpiar_poblacion_sexo_edad,
+    "poblacion_municipal_2005_2017": limpiar_poblacion_municipal,
+    "poblacion_municipal_2018_2042": limpiar_poblacion_municipal,
 }
 
 
