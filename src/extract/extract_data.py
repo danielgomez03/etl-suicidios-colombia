@@ -1,3 +1,7 @@
+
+def extract_csv(ruta) -> pd.DataFrame:
+    df = pd.read_csv(BASE_DIR / ruta, dtype=str, encoding="utf-8")
+    return df
 import os
 from pathlib import Path
 
@@ -17,29 +21,29 @@ print(list(cfg.keys()))
 (BASE_DIR / cfg["paths"]["bronze_dir"]).mkdir(parents=True, exist_ok=True)
 
 
-def extract_api(fuente):
-    """Descarga completa de la API Socrata"""
-    token = os.getenv(fuente["token_env"])
-    headers = {"X-App-Token": token} if token else {}
-    if not token:
-        print(f"Aviso: no se encontró {fuente['token_env']} en .env")
 
+def extract_api(fuente):
+    raw_path = fuente.get("raw_path") or fuente.get("output")
+    if raw_path and fuente.get("use_cache", False) and (BASE_DIR / raw_path).exists():
+        print(f"Usando copia local de bronze: {raw_path}")
+        return extract_csv(raw_path)
+    token = os.getenv(fuente.get("token_env", ""))
+    headers = {"X-App-Token": token} if token else {}
     todos, offset = [], 0
     while True:
-        params = {
-            "$limit": fuente["batch_size"],
-            "$offset": offset,
-            "$order": fuente["order"],
-        }
+        params = {"$limit": fuente.get("batch_size", 50000), "$offset": offset, "$order": fuente.get("order", ":id")}
         resp = requests.get(fuente["url"], headers=headers, params=params, timeout=60)
         resp.raise_for_status()
         lote = resp.json()
-        if not lote:
-            break
+        if not lote: break
         todos.extend(lote)
         offset += len(lote)
-        print(f"Descargadas {len(todos)} filas...")
-    return pd.DataFrame(todos).astype("string")
+    df = pd.DataFrame(todos).astype("string")
+    if raw_path:
+        (BASE_DIR / raw_path).parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(BASE_DIR / raw_path, index=False, encoding="utf-8")
+    return df
+
 
 
 def extract_excel(fuente):
@@ -58,6 +62,7 @@ def extract_excel(fuente):
         raise ValueError(f"No se encontró la fila de encabezado '{marca}' en {ruta.name}")
     inicio = filas[0]
 
+    df = crudo.loc[inicio + 1:].copy()
     df.columns = crudo.loc[inicio].str.strip()
     df = df.dropna(how="all").dropna(axis=1, how="all")
     es_dato = df.iloc[:, 0].str.strip().str.fullmatch(r"\d{1,2}", na=False)
@@ -81,3 +86,14 @@ if __name__ == "__main__":
 
         df.to_csv(salida, index=False, encoding="utf-8")
         print(f"{nombre}: {df.shape} -> {salida.relative_to(BASE_DIR)}")
+
+
+def extract_source(fuente: dict) -> pd.DataFrame:
+    tipo = fuente["type"]
+    if tipo == "csv":
+        return extract_csv(fuente["path"])
+    if tipo == "excel":
+        return extract_excel(fuente)
+    if tipo == "api":
+        return extract_api(fuente)
+    raise ValueError(f"Tipo de fuente no soportado: {tipo}")

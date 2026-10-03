@@ -201,18 +201,13 @@ def _limpiar_poblacion(df: pd.DataFrame, col_poblacion: str) -> pd.DataFrame:
     return d.reset_index(drop=True)
 
 
-def limpiar_poblacion_2005_2017(df: pd.DataFrame, config: dict) -> pd.DataFrame:
-    return _limpiar_poblacion(df, "poblacion")
-
-
-def limpiar_poblacion_2018_2050(df: pd.DataFrame, config: dict) -> pd.DataFrame:
-    return _limpiar_poblacion(df, "total")
-
+def limpiar_poblacion_2005_2050(df: pd.DataFrame, config: dict) -> pd.DataFrame:
+    cols_pob = [c for c in df.columns if "poblacion" in c.lower() or "total" in c.lower()]
+    return _limpiar_poblacion(df, cols_pob[0])
 
 LIMPIADORES = {
     "suicidios": limpiar_suicidios,
-    "poblacion_2005_2017": limpiar_poblacion_2005_2017,
-    "poblacion_2018_2050": limpiar_poblacion_2018_2050,
+    "poblacion_2005_2050": limpiar_poblacion_2005_2050,
 }
 
 

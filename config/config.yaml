@@ -1,52 +1,55 @@
 project:
   name: Presuntos Suicidios Colombia 2015-2024
-  version: "0.1"
-  description: >-
-    Pipeline ETL con arquitectura medallon (bronze, silver, gold) para la base
-    "Presuntos Suicidios. Colombia, 2015 a 2024. Cifras definitivas" (INMLCF)
+  version: '0.1'
+  description: Pipeline ETL con arquitectura medallon (bronze, silver, gold) para
+    la base "Presuntos Suicidios. Colombia, 2015 a 2024. Cifras definitivas" (INMLCF)
     y las proyecciones de poblacion departamental del DANE.
   authors:
-    - Ana Maria Toro
-    - Ana Sofia Perhueza
-    - Daniel Gomez Sermeno
-    - Daniel Steven Colmenares
+  - Ana Maria Toro
+  - Ana Sofia Perhueza
+  - Daniel Gomez Sermeno
+  - Daniel Steven Colmenares
   license: MIT
   repository: https://github.com/danielgomez03/etl-suicidios-colombia
-  created: "2026-10-01"
-
+  created: '2026-10-01'
 paths:
   bronze_dir: data/bronze
   silver_dir: data/silver
   gold_dir: data/gold
   logs_dir: logs
-
 period:
   start_year: 2015
   end_year: 2024
-
-
 sources:
   suicidios:
     type: api
     url: https://www.datos.gov.co/resource/f75u-mirk.json
-    token_env: SOCRATA_APP_TOKEN     
+    token_env: SOCRATA_APP_TOKEN
     batch_size: 50000
-    order: ":id"
+    order: :id
     output: data/bronze/suicidios_raw.csv
-
+    key: id
+    use_cache: true
+    raw_path: data/bronze/suicidios_raw.csv
   poblacion_2005_2050:
     type: excel
     path: data/bronze/DCD-area-proypoblacion-dep-2005-2050_VP.xlsx
     sheet: 0
-    header_starts: DP                 
+    header_starts: DP
     output: data/bronze/poblacion_2005_2050_raw.csv
-
-
-silver:
-  rules:
-    fill_text: Sin informacion
-  formats:
-    date_formats: ["%Y-%m-%d", "%d/%m/%Y", "%m-%d-%Y", "%d-%b-%Y", "%B %d, %Y"]
-
-gold:
-  table: gold_suicidios
+integration:
+  sources:
+  - suicidios
+  'on': null
+  how: left
+database:
+  gold_table: gold_suicidios
+formats:
+  date_formats:
+  - '%Y-%m-%d'
+  - '%d/%m/%Y'
+  - '%m-%d-%Y'
+  - '%d-%b-%Y'
+  - '%B %d, %Y'
+rules:
+  fill_text: Sin informacion
