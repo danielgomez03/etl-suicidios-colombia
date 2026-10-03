@@ -222,24 +222,46 @@ def limpiar_poblacion_sexo_edad(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     """
     d = df.copy()
     d = d[d["dp"].str.fullmatch(r"\d{2}", na=False) & d["area_geografica"].str.lower().eq("total")]
+    largo = _a_formato_largo(d, {"dp": "codigo_dane", "dpnom": "departamento"})
+    return _revisar_sexo_edad(largo, ["codigo_dane", "ano", "sexo", "edad"], "departamental")
 
+
+def _a_formato_largo(d: pd.DataFrame, ids: dict) -> pd.DataFrame:
+    """Columnas 'hombres_0', 'mujeres_1_ano', ... -> filas (sexo, edad, poblacion).
+    En el archivo municipal 2005-2017 la ultima edad es '85 y mas' (edad 85 = 85 o mas)."""
     columnas = [c for c in d.columns if pd.Series([c]).str.fullmatch(PATRON_SEXO_EDAD).iloc[0]]
-    largo = d.melt(id_vars=["dp", "dpnom", "ano"], value_vars=columnas,
-                   var_name="columna", value_name="poblacion")
+    largo = d.melt(id_vars=list(ids) + ["ano"], value_vars=columnas, var_name="columna", value_name="poblacion")
     partes = largo["columna"].str.extract(PATRON_SEXO_EDAD)
     largo["sexo"] = partes[0].map({"hombres": "Hombre", "mujeres": "Mujer"})
     largo["edad"] = pd.to_numeric(partes[1]).astype("Int64")
     largo["poblacion"] = pd.to_numeric(largo["poblacion"].str.replace(",", "", regex=False),
                                        errors="coerce").astype("Int64")
     largo["ano"] = pd.to_numeric(largo["ano"], errors="coerce").astype("Int64")
-    largo = largo.rename(columns={"dp": "codigo_dane", "dpnom": "departamento"})
-    largo = largo[["codigo_dane", "departamento", "ano", "sexo", "edad", "poblacion"]]
+    largo = largo.rename(columns=ids)
+    return largo[list(ids.values()) + ["ano", "sexo", "edad", "poblacion"]]
 
+
+def _revisar_sexo_edad(largo: pd.DataFrame, llave: list, nivel: str) -> pd.DataFrame:
     if largo["poblacion"].isna().any():
-        logger.warning(f"poblacion sexo/edad: {largo['poblacion'].isna().sum()} celdas sin valor")
-    if largo.duplicated(["codigo_dane", "ano", "sexo", "edad"]).any():
-        logger.warning("poblacion sexo/edad: filas repetidas por departamento, anio, sexo y edad")
+        logger.warning(f"poblacion {nivel} sexo/edad: {largo['poblacion'].isna().sum()} celdas sin valor")
+    if largo.duplicated(llave).any():
+        logger.warning(f"poblacion {nivel} sexo/edad: filas repetidas por {', '.join(llave)}")
     return largo.reset_index(drop=True)
+
+
+def limpiar_poblacion_municipal_sexo_edad(df: pd.DataFrame, config: dict) -> pd.DataFrame:
+    """Silver de las proyecciones municipales por sexo y edad simple (DANE), area 'Total'.
+
+    Solo se conservan los municipios del departamento foco (Valle del Cauca): el archivo
+    nacional tiene 1.123 municipios x 300 columnas y en formato largo pasaria de 5 millones
+    de filas. Para ampliar el alcance basta cambiar scope.departamento_foco en config.yaml.
+    """
+    foco = config["scope"]["departamento_foco"]
+    d = df[df["mpio"].str.fullmatch(r"\d{5}", na=False) & df["area_geografica"].str.lower().eq("total")
+           & df["mpio"].str.startswith(foco)].copy()
+    largo = _a_formato_largo(d, {"mpio": "codigo_municipio", "dpmp": "municipio"})
+    logger.info(f"poblacion municipal sexo/edad: {largo['codigo_municipio'].nunique()} municipios del depto {foco}")
+    return _revisar_sexo_edad(largo, ["codigo_municipio", "ano", "sexo", "edad"], "municipal")
 
 
 def limpiar_poblacion_municipal(df: pd.DataFrame, config: dict) -> pd.DataFrame:
@@ -264,6 +286,8 @@ LIMPIADORES = {
     "poblacion_sexo_edad_2018_2050": limpiar_poblacion_sexo_edad,
     "poblacion_municipal_2005_2017": limpiar_poblacion_municipal,
     "poblacion_municipal_2018_2042": limpiar_poblacion_municipal,
+    "poblacion_municipal_sexo_edad_2005_2017": limpiar_poblacion_municipal_sexo_edad,
+    "poblacion_municipal_sexo_edad_2018_2042": limpiar_poblacion_municipal_sexo_edad,
 }
 
 

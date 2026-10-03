@@ -205,13 +205,24 @@ def _con_totales(df: pd.DataFrame, dims: list, valor: str) -> pd.DataFrame:
     return pd.concat(partes, ignore_index=True)
 
 
-def poblacion_por_sexo_grupo(pob_sexo_edad: pd.DataFrame, dim_grupo_edad: pd.DataFrame) -> pd.DataFrame:
-    """Edades simples -> grupos quinquenales de Medicina Legal (codigo_dane, ano, sexo, grupo_edad)."""
+def poblacion_por_sexo_grupo(pob_sexo_edad: pd.DataFrame, dim_grupo_edad: pd.DataFrame,
+                             llave: str = "codigo_dane") -> pd.DataFrame:
+    """Edades simples -> grupos quinquenales de Medicina Legal (llave, ano, sexo, grupo_edad).
+    llave: 'codigo_dane' (departamento) o 'codigo_municipio'."""
     p = pob_sexo_edad.copy()
     p["grupo_edad"] = None
     for _, g in dim_grupo_edad.iterrows():
         p.loc[p["edad"].between(g["edad_min"], g["edad_max"]), "grupo_edad"] = g["grupo_edad"]
-    return p.groupby(["codigo_dane", "ano", "sexo", "grupo_edad"], dropna=False)["poblacion"].sum().reset_index()
+    return p.groupby([llave, "ano", "sexo", "grupo_edad"], dropna=False)["poblacion"].sum().reset_index()
+
+
+def _denominadores(pob_sexo_grupo: pd.DataFrame, pob_total: pd.DataFrame, llave: str) -> pd.DataFrame:
+    """Poblacion por llave, ano, sexo y grupo, con filas 'Total'. El total general (Total/Total)
+    sale de la serie oficial por area; los demas, de la serie por sexo y edad."""
+    sg = _con_totales(pob_sexo_grupo, ["sexo", "grupo_edad"], "poblacion")
+    sg = sg[~((sg["sexo"] == "Total") & (sg["grupo_edad"] == "Total"))]
+    tt = pob_total.assign(sexo="Total", grupo_edad="Total")[[llave, "ano", "sexo", "grupo_edad", "poblacion"]]
+    return pd.concat([sg, tt], ignore_index=True)
 
 
 def _tasas_por_periodo(casos: pd.DataFrame, pob: pd.DataFrame, llaves: list, config: dict) -> pd.DataFrame:
@@ -233,25 +244,21 @@ def _tasas_por_periodo(casos: pd.DataFrame, pob: pd.DataFrame, llaves: list, con
 
 
 def construir_tasas(casos: pd.DataFrame, pob_dep: pd.DataFrame, pob_sexo_grupo: pd.DataFrame,
-                    pob_mun: pd.DataFrame, dim_departamento: pd.DataFrame, dim_municipio: pd.DataFrame,
-                    config: dict) -> pd.DataFrame:
+                    pob_mun: pd.DataFrame, pob_mun_sexo_grupo: pd.DataFrame, dim_departamento: pd.DataFrame,
+                    dim_municipio: pd.DataFrame, config: dict) -> pd.DataFrame:
     """gold_tasa_mortalidad en formato largo.
 
-    - Nacional y departamental: por sexo (Total/Hombre/Mujer) y grupo de edad (Total/grupos).
-      Denominador: proyecciones por sexo y edad simple; el total (Total/Total) usa la serie
-      departamental oficial por area.
-    - Municipios foco: solo total (el DANE municipal por sexo y edad no se incluye; con pocos
-      casos la tasa por sexo seria inestable).
+    Nacional, departamental y municipios foco, por sexo (Total/Hombre/Mujer) y grupo de edad
+    (Total/grupos). Denominador: proyecciones DANE por sexo y edad simple; el total general
+    (Total/Total) usa la serie oficial por area (departamental o municipal).
+    En los municipios casi todas las tasas por sexo y edad quedan marcadas como inestables.
     """
     c = casos.rename(columns={"ano_del_hecho": "ano", "sexo_de_la_victima": "sexo",
                               "grupo_de_edad_quinquenal": "grupo_edad"})
     c = c.assign(casos=1)
 
     # --- denominadores con totales ---
-    pob_sg = _con_totales(pob_sexo_grupo, ["sexo", "grupo_edad"], "poblacion")
-    pob_sg = pob_sg[~((pob_sg["sexo"] == "Total") & (pob_sg["grupo_edad"] == "Total"))]
-    pob_tt = pob_dep.assign(sexo="Total", grupo_edad="Total")[["codigo_dane", "ano", "sexo", "grupo_edad", "poblacion"]]
-    pob_d = pd.concat([pob_sg, pob_tt], ignore_index=True)
+    pob_d = _denominadores(pob_sexo_grupo, pob_dep, "codigo_dane")
 
     # --- casos con totales ---
     cas_d = _con_totales(c[["codigo_dane_departamento", "ano", "sexo", "grupo_edad", "casos"]]
@@ -277,12 +284,12 @@ def construir_tasas(casos: pd.DataFrame, pob_dep: pd.DataFrame, pob_sexo_grupo: 
 
     # Municipios foco
     foco = dim_municipio[dim_municipio["municipio_foco"]]
-    cas_m = (c[c["codigo_dane_municipio"].isin(foco["codigo_municipio"])]
-             .groupby(["codigo_dane_municipio", "ano"])["casos"].sum().reset_index()
-             .rename(columns={"codigo_dane_municipio": "codigo"}).assign(sexo="Total", grupo_edad="Total"))
-    pob_m = (pob_mun[pob_mun["codigo_municipio"].isin(foco["codigo_municipio"])]
-             .rename(columns={"codigo_municipio": "codigo"}).assign(sexo="Total", grupo_edad="Total"))
-    t = _tasas_por_periodo(cas_m, pob_m[["codigo", "ano", "sexo", "grupo_edad", "poblacion"]], llaves, config)
+    en_foco = lambda df, col: df[df[col].isin(foco["codigo_municipio"])]
+    cas_m = _con_totales(en_foco(c, "codigo_dane_municipio")[["codigo_dane_municipio", "ano", "sexo", "grupo_edad", "casos"]],
+                         ["sexo", "grupo_edad"], "casos").rename(columns={"codigo_dane_municipio": "codigo"})
+    pob_m = _denominadores(en_foco(pob_mun_sexo_grupo, "codigo_municipio"), en_foco(pob_mun, "codigo_municipio"),
+                           "codigo_municipio").rename(columns={"codigo_municipio": "codigo"})
+    t = _tasas_por_periodo(cas_m, pob_m, llaves, config)
     t = t.assign(nivel="Municipio").merge(
         foco.rename(columns={"codigo_municipio": "codigo", "municipio": "territorio"})[["codigo", "territorio"]],
         on="codigo", how="left")
@@ -362,7 +369,7 @@ def _variantes_residuales(df: pd.DataFrame, columnas: list) -> int:
 
 def construir_kpis(leidos: int, validos: pd.DataFrame, rechazados: pd.DataFrame, resumen_reglas: pd.DataFrame,
                    detalle_fallas: pd.DataFrame, silver: pd.DataFrame, gold: pd.DataFrame,
-                   tasas: pd.DataFrame, chequeo_denominador: float, config: dict) -> pd.DataFrame:
+                   tasas: pd.DataFrame, chequeo_denominador: dict, config: dict) -> pd.DataFrame:
     """Una fila por indicador medido en esta ejecucion."""
     u = config["thresholds"]
     filas = []
@@ -398,9 +405,10 @@ def construir_kpis(leidos: int, validos: pd.DataFrame, rechazados: pd.DataFrame,
     pct_mun = round((~validos["id"].astype("string").isin(falla_q1)).mean() * 100, 3)
     fila("KR2", "Casos con municipio que cruza con poblacion DANE", pct_mun, "%",
          f">= {u['kr2_pct_codigos_cruzan_min']}", "Cumple" if pct_mun >= u["kr2_pct_codigos_cruzan_min"] else "No cumple")
-    fila("KR2", "Diferencia maxima entre poblacion por sexo/edad y total departamental",
-         round(chequeo_denominador, 4), "%", "< 0.1", "Cumple" if chequeo_denominador < 0.1 else "No cumple",
-         "consistencia de los dos archivos DANE usados como denominador")
+    for nivel, diferencia in chequeo_denominador.items():
+        fila("KR2", f"Diferencia maxima poblacion por sexo/edad vs total {nivel}",
+             round(diferencia, 4), "%", "< 0.1", "Cumple" if diferencia < 0.1 else "No cumple",
+             "consistencia de los dos archivos DANE usados como denominador")
 
     # ---- KPI 1: consistencia ----
     falla_alguna = detalle_fallas["id"].nunique()

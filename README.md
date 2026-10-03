@@ -12,8 +12,9 @@ Pipeline ETL en Python con **arquitectura medallón** (bronze → silver → gol
 | `poblacion_2005_2050` | Población departamental por área, 2005-2050 (DANE) | `data/bronze/DCD-area-proypoblacion-dep-2005-2050_VP.xlsx` |
 | `poblacion_sexo_edad_2005_2017` / `_2018_2050` | Población departamental por área, **sexo y edad simple** (DANE) | [DCD-area-sexo-edad-proypoblacion-dep-2005-2017_VP.xlsx](https://www.dane.gov.co/files/censo2018/proyecciones-de-poblacion/Departamental/DCD-area-sexo-edad-proypoblacion-dep-2005-2017_VP.xlsx) y [PPED-AreaSexoEdadDep-2018-2050_VP.xlsx](https://www.dane.gov.co/files/censo2018/proyecciones-de-poblacion/Departamental/PPED-AreaSexoEdadDep-2018-2050_VP.xlsx) |
 | `poblacion_municipal_2005_2017` / `_2018_2042` | Población **municipal** por área (DANE) | [DCD-area-proypoblacion-Mun-2005-2017_VP.xlsx](https://www.dane.gov.co/files/censo2018/proyecciones-de-poblacion/Municipal/DCD-area-proypoblacion-Mun-2005-2017_VP.xlsx) y [PPED-AreaMun-2018-2042_VP.xlsx](https://www.dane.gov.co/files/censo2018/proyecciones-de-poblacion/Municipal/PPED-AreaMun-2018-2042_VP.xlsx) |
+| `poblacion_municipal_sexo_edad_2005_2017` / `_2018_2042` | Población **municipal por sexo y edad simple** (DANE); se usan los municipios del Valle | [DCD-area-sexo-edad-proypoblacion-Mun-2005-2017_VP.xlsx](https://www.dane.gov.co/files/censo2018/proyecciones-de-poblacion/Municipal/DCD-area-sexo-edad-proypoblacion-Mun-2005-2017_VP.xlsx) (56 MB) y [PPED-AreaSexoEdadMun-2018-2042_VP.xlsx](https://www.dane.gov.co/files/censo2018/proyecciones-de-poblacion/Municipal/PPED-AreaSexoEdadMun-2018-2042_VP.xlsx) (132 MB) |
 
-Los Excel del DANE están en `data/bronze/` dentro del repositorio porque no se pueden descargar automáticamente. Página oficial: [DANE — Proyecciones de población](https://www.dane.gov.co/index.php/estadisticas-por-tema/demografia-y-poblacion/proyecciones-de-poblacion).
+Los Excel del DANE están en `data/bronze/` dentro del repositorio porque no se pueden descargar automáticamente. El municipal por sexo y edad 2018-2042 pesa 132 MB y GitHub no acepta archivos de más de 100 MB, así que está dividido en dos partes (`.part0` y `.part1`). El pipeline las une en memoria y verifica con su huella SHA-256 que el resultado es idéntico al archivo publicado por el DANE; no hay que hacer nada al clonar. Si se descarga el archivo completo en `data/bronze/`, se usa ese. Página oficial: [DANE — Proyecciones de población](https://www.dane.gov.co/index.php/estadisticas-por-tema/demografia-y-poblacion/proyecciones-de-poblacion).
 
 ## Arquitectura
 
@@ -29,7 +30,7 @@ Los Excel del DANE están en `data/bronze/` dentro del repositorio porque no se 
 
 | Tabla | Contenido | Acceso |
 | --- | --- | --- |
-| `gold_tasa_mortalidad` | Casos, población y tasa por 100.000 hab.: nacional y departamental (por sexo y grupo de edad), y los 6 municipios foco del Valle (Cali, Palmira, Buenaventura, Jamundí, Tuluá, Buga); por año, quinquenio y decenio. Marca las tasas inestables (< 20 casos) | Tablero |
+| `gold_tasa_mortalidad` | Casos, población y tasa por 100.000 hab.: nacional, departamental y los 6 municipios foco del Valle (Cali, Palmira, Buenaventura, Jamundí, Tuluá, Buga), por sexo y grupo de edad; por año, quinquenio y decenio. Marca las tasas inestables (< 20 casos) | Tablero |
 | `gold_agregado_tablero` | Conteos por territorio, periodo y variable. Las celdas con menos de 5 casos se suprimen | Tablero |
 | `gold_kpi_calidad` | KR1, KR2, KPI 1 (consistencia), KPI 2 (tasa) y KPI 3 (completitud), medidos en cada ejecución | Tablero |
 | `dim_departamento`, `dim_municipio`, `dim_grupo_edad` | Tablas maestras: llave de cruce con el DANE y región natural de cada departamento (`config/regiones.csv`) | Tablero |
@@ -87,7 +88,7 @@ En `.env` va el token de datos.gov.co (`SOCRATA_APP_TOKEN`). Sin token la API ta
 Desde la raíz del proyecto y con el `venv` activo:
 
 ```powershell
-python main.py            # corre el ETL completo (~35 s)
+python main.py            # corre el ETL completo (~80 s; la mayor parte es leer los Excel municipales)
 python -m pytest -v       # pruebas
 ```
 

@@ -24,10 +24,17 @@ def _etapa(nombre, inicio):
     logger.info(f"{nombre}: {time.perf_counter() - inicio:.2f} s")
 
 
-def _apilar(limpios: dict, prefijo: str) -> pd.DataFrame:
+def _apilar(limpios: dict, nombres: list) -> pd.DataFrame:
     """Une las series 2005-2017 y 2018-20xx de una misma poblacion DANE."""
-    partes = [df for nombre, df in limpios.items() if nombre.startswith(prefijo)]
-    return pd.concat(partes, ignore_index=True)
+    return pd.concat([limpios[n] for n in nombres], ignore_index=True)
+
+
+def _diferencia_max(sexo_grupo: pd.DataFrame, total: pd.DataFrame, llave: str, p: dict) -> float:
+    """% maximo de diferencia entre la poblacion por sexo/edad y el total oficial (mismo territorio y anio)."""
+    total = total[total["ano"].between(p["start_year"], p["end_year"])]
+    comp = (sexo_grupo.groupby([llave, "ano"])["poblacion"].sum().rename("sexo_edad").to_frame()
+            .join(total.set_index([llave, "ano"])["poblacion"], how="inner"))
+    return float(((comp["sexo_edad"] - comp["poblacion"]).abs() / comp["poblacion"] * 100).max())
 
 
 def run_pipeline():
@@ -52,8 +59,10 @@ def run_pipeline():
             ld.save_csv(limpios[nombre], silver_dir / f"{nombre}_clean.csv")
 
         pob_dep = limpios["poblacion_2005_2050"]
-        pob_sexo_edad = _apilar(limpios, "poblacion_sexo_edad")
-        pob_mun = _apilar(limpios, "poblacion_municipal")
+        pob_sexo_edad = _apilar(limpios, ["poblacion_sexo_edad_2005_2017", "poblacion_sexo_edad_2018_2050"])
+        pob_mun = _apilar(limpios, ["poblacion_municipal_2005_2017", "poblacion_municipal_2018_2042"])
+        pob_mun_sexo_edad = _apilar(limpios, ["poblacion_municipal_sexo_edad_2005_2017",
+                                              "poblacion_municipal_sexo_edad_2018_2042"])
 
         # Tablas maestras: llave de cruce documentada con el DANE
         dim_grupo_edad = gld.construir_dim_grupo_edad(limpios["suicidios"]["grupo_de_edad_quinquenal"])
@@ -78,19 +87,20 @@ def run_pipeline():
         casos = gld.agregar_metricas(casos, dim_departamento)
 
         pob_sexo_grupo = gld.poblacion_por_sexo_grupo(pob_sexo_edad, dim_grupo_edad)
+        pob_mun_sexo_grupo = gld.poblacion_por_sexo_grupo(pob_mun_sexo_edad, dim_grupo_edad, "codigo_municipio")
 
-        # Chequeo de denominadores: poblacion por sexo/edad vs. total departamental oficial
+        # Chequeo de denominadores: poblacion por sexo/edad vs. total oficial por area
+        diferencias = {
+            "departamental": _diferencia_max(pob_sexo_grupo, pob_dep, "codigo_dane", p),
+            "municipal (Valle)": _diferencia_max(pob_mun_sexo_grupo, pob_mun, "codigo_municipio", p),
+        }
+
         rango = pob_dep["ano"].between(p["start_year"], p["end_year"])
-        comparacion = (pob_sexo_grupo.groupby(["codigo_dane", "ano"])["poblacion"].sum().rename("sexo_edad").to_frame()
-                       .join(pob_dep[rango].set_index(["codigo_dane", "ano"])["poblacion"], how="inner"))
-        diferencia_max = float(((comparacion["sexo_edad"] - comparacion["poblacion"]).abs()
-                                / comparacion["poblacion"] * 100).max())
-
-        tasas = gld.construir_tasas(casos, pob_dep[rango], pob_sexo_grupo, pob_mun,
+        tasas = gld.construir_tasas(casos, pob_dep[rango], pob_sexo_grupo, pob_mun, pob_mun_sexo_grupo,
                                     dim_departamento, dim_municipio, config)
         tablero = gld.construir_agregado_tablero(casos, dim_departamento, dim_municipio, config)
         kpis = gld.construir_kpis(len(silver), validos, rechazados, resumen_reglas, detalle_fallas,
-                                  silver, casos, tasas, diferencia_max, config)
+                                  silver, casos, tasas, diferencias, config)
 
         tablas_gold = {
             config["database"]["gold_table"]: casos,

@@ -12,3 +12,5 @@ ipykernel
 psycopg2-binary
 nbclient
 nbformat
+python-calamine
+scipy

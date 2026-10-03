@@ -3,6 +3,8 @@
 Este modulo solo define funciones: no lee el config ni escribe archivos al importarse.
 El orquestador (main.py) decide que fuentes extraer y en que orden.
 """
+import hashlib
+import io
 import os
 from typing import Optional
 
@@ -13,6 +15,13 @@ from dotenv import load_dotenv
 from src.utils import BASE_DIR, get_logger
 
 logger = get_logger(__name__)
+
+# calamine lee los Excel grandes del DANE (130 MB) unas 10 veces mas rapido que openpyxl
+try:
+    import python_calamine  # noqa: F401
+    _MOTOR_EXCEL = "calamine"
+except ImportError:
+    _MOTOR_EXCEL = None
 
 
 def extract_csv(ruta) -> pd.DataFrame:
@@ -68,6 +77,22 @@ def extract_api_socrata(url: str, batch_size: int = 50000, token: Optional[str] 
     return extract_api(fuente)
 
 
+def _unir_partes(fuente: dict) -> io.BytesIO:
+    """Archivos de mas de 100 MB (limite de GitHub) se guardan en bronze divididos en partes.
+    Se unen en memoria y se verifica con SHA-256 que sean identicos al archivo original del DANE."""
+    ruta = BASE_DIR / fuente["path"]
+    partes = [BASE_DIR / p for p in fuente.get("parts", [])]
+    if not partes or not all(p.exists() for p in partes):
+        disponibles = sorted(p.name for p in ruta.parent.glob("*") if p.is_file())
+        raise FileNotFoundError(f"No existe {ruta.name} (ni sus partes) en {ruta.parent}. Archivos: {disponibles}")
+    contenido = b"".join(p.read_bytes() for p in partes)
+    huella = hashlib.sha256(contenido).hexdigest()
+    if fuente.get("sha256") and huella != fuente["sha256"]:
+        raise ValueError(f"{ruta.name}: las partes unidas no coinciden con el original (sha256 {huella})")
+    logger.info(f"{ruta.name}: unidas {len(partes)} partes ({len(contenido) / 1e6:.1f} MB), sha256 verificado")
+    return io.BytesIO(contenido)
+
+
 def extract_excel(fuente: dict) -> pd.DataFrame:
     """Lee una hoja de Excel del DANE como texto.
 
@@ -75,13 +100,11 @@ def extract_excel(fuente: dict) -> pd.DataFrame:
     - header_rows: 2 cuando el encabezado ocupa dos filas (archivos por sexo y edad 2018-2050:
       la segunda fila trae 'Hombres 0 años', 'Hombres 1 año', ...).
     - Se descartan las filas vacias y las notas al pie (filas cuyo codigo DP no es numerico).
+    - parts + sha256: si el archivo no esta completo en bronze, se arma desde sus partes.
     """
     ruta = BASE_DIR / fuente["path"]
-    if not ruta.exists():
-        disponibles = sorted(p.name for p in ruta.parent.glob("*") if p.is_file())
-        raise FileNotFoundError(f"No existe {ruta.name} en {ruta.parent}. Archivos: {disponibles}")
-
-    crudo = pd.read_excel(ruta, sheet_name=fuente.get("sheet", 0), header=None, dtype=str)
+    archivo = ruta if ruta.exists() else _unir_partes(fuente)
+    crudo = pd.read_excel(archivo, sheet_name=fuente.get("sheet", 0), header=None, dtype=str, engine=_MOTOR_EXCEL)
 
     marca = fuente.get("header_starts", "DP")
     filas = crudo.index[crudo.iloc[:, 0].str.strip().eq(marca)]

@@ -88,3 +88,10 @@ def test_tablero_no_publica_celdas_pequenas():
 def test_gold_sin_variables_sensibles():
     g = _leer("gold_suicidios")
     assert not {"orientacion_sexual", "identidad_de_genero", "transgenero"} & set(g.columns)
+
+
+def test_municipios_foco_suma_por_sexo():
+    t = _leer("gold_tasa_mortalidad")
+    m = t[(t["nivel"] == "Municipio") & (t["grupo_edad"] == "Total")]
+    casos = m.pivot_table(index=["codigo", "periodo"], columns="sexo", values="casos")
+    assert len(casos) > 0 and ((casos["Hombre"] + casos["Mujer"]) == casos["Total"]).all()

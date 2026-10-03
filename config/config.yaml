@@ -74,6 +74,24 @@ sources:
     path: data/bronze/PPED-AreaMun-2018-2042_VP.xlsx
     sheet: PobMunicipalxÁrea
     header_starts: DP
+  # Poblacion municipal por area, sexo y edad simple (tasas por sexo y edad de los municipios foco).
+  # El archivo 2018-2042 pesa 132 MB (GitHub acepta hasta 100 MB): en bronze va dividido en dos
+  # partes que el extractor une en memoria y verifica con sha256 contra el original del DANE.
+  poblacion_municipal_sexo_edad_2005_2017:
+    type: excel
+    path: data/bronze/DCD-area-sexo-edad-proypoblacion-Mun-2005-2017_VP.xlsx
+    sheet: 0
+    header_starts: DP
+  poblacion_municipal_sexo_edad_2018_2042:
+    type: excel
+    path: data/bronze/PPED-AreaSexoEdadMun-2018-2042_VP.xlsx
+    parts:
+    - data/bronze/PPED-AreaSexoEdadMun-2018-2042_VP.xlsx.part0
+    - data/bronze/PPED-AreaSexoEdadMun-2018-2042_VP.xlsx.part1
+    sha256: 7e461635315664d44ba52cc7f951947085a0ea6f2dda72fe2efed11a76880516
+    sheet: PobMunicipalxÁreaSexoEdad
+    header_starts: DP
+    header_rows: 2
 
 integration:
   sources:
