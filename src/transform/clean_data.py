@@ -1,94 +1,103 @@
 import re
-import unicodedata
+from pathlib import Path
 
 import pandas as pd
+import yaml
 
-from src.utils import get_logger
+BASE_DIR = Path(__file__).resolve().parents[2]
 
-logger = get_logger(__name__)
-
-
-# ---------- herramientas reutilizables ----------
-
-def quitar_tildes(texto: str) -> str:
-    return "".join(c for c in unicodedata.normalize("NFKD", texto) if not unicodedata.combining(c))
+with open(BASE_DIR / "config" / "config.yaml", encoding="utf-8") as f:
+    cfg = yaml.safe_load(f)
 
 
-def normalizar_texto(serie: pd.Series) -> pd.Series:
-    """Quita espacios sobrantes y pone Formato Titulo."""
-    return serie.str.strip().str.replace(r"\s+", " ", regex=True).str.title()
 
+ #  BASE DE POBLACIÓN POR DEPARTAMENTOS
+# Un solo nombre oficial por código de departamento
+DEPARTAMENTOS = {
+    "05": "Antioquia", "08": "Atlántico", "11": "Bogotá, D.C.", "13": "Bolívar",
+    "15": "Boyacá", "17": "Caldas", "18": "Caquetá", "19": "Cauca", "20": "Cesar",
+    "23": "Córdoba", "25": "Cundinamarca", "27": "Chocó", "41": "Huila",
+    "44": "La Guajira", "47": "Magdalena", "50": "Meta", "52": "Nariño",
+    "54": "Norte de Santander", "63": "Quindío", "66": "Risaralda",
+    "68": "Santander", "70": "Sucre", "73": "Tolima", "76": "Valle del Cauca",
+    "81": "Arauca", "85": "Casanare", "86": "Putumayo",
+    "88": "Archipiélago de San Andrés, Providencia y Santa Catalina",
+    "91": "Amazonas", "94": "Guainía", "95": "Guaviare", "97": "Vaupés",
+    "99": "Vichada",}
 
-def unificar_categorias(serie: pd.Series) -> pd.Series:
-    """Agrupa variantes (mayusculas, tildes, espacios) y usa la escritura mas comun."""
-    s = serie.str.strip()
-    clave = s.dropna().map(lambda x: quitar_tildes(x).lower())
-    oficial = s.dropna().groupby(clave).agg(lambda v: v.value_counts().index[0])
-    return s.map(lambda x: oficial[quitar_tildes(x).lower()] if isinstance(x, str) else x)
+def normalizar(texto: pd.Series) -> pd.Series:
 
+    return texto.astype("string").str.strip().str.replace(r"\s+", " ", regex=True).str.lower()
 
-def parsear_fecha(valor, formatos: list):
-    """Prueba cada formato en orden; si ninguno sirve devuelve NaT (no adivina)."""
-    if pd.isna(valor):
-        return pd.NaT
-    for fmt in formatos:
-        try:
-            return pd.to_datetime(str(valor).strip(), format=fmt)
-        except ValueError:
-            continue
-    return pd.NaT
+def silver_poblacion() -> pd.DataFrame:
+    fuente = cfg["sources"]["poblacion_2005_2050"]
+    df = pd.read_csv(BASE_DIR / fuente["output"], dtype=str, encoding="utf-8")
+    df.columns = df.columns.str.strip()
+    print(f"Leído bronze: {df.shape}")
 
+    #nombres columnas
+    df = df.rename(columns={"DP": "cod_dpto", "DPNOM": "departamento",
+                            "AÑO": "anio", "ÁREA GEOGRÁFICA": "area"})
 
-def a_numero(serie: pd.Series) -> pd.Series:
-    """'3,75' -> 3.75 ; '20 creditos' -> 20 ; texto sin numero -> NaN."""
-    limpio = serie.astype("string").str.replace(",", ".", regex=False).str.extract(r"(-?\d+\.?\d*)")[0]
-    return pd.to_numeric(limpio, errors="coerce")
+    # columna de población 
+    cols_pob = [c for c in df.columns if c.strip().lower() in ("población", "poblacion", "total")]
+    if not cols_pob:
+        raise ValueError(f"No encontré la columna de población. Columnas: {df.columns.tolist()}")
+    df["poblacion"] = df[cols_pob].bfill(axis=1).iloc[:, 0]
+    df = df.drop(columns=cols_pob)
 
+    # Definir tipos de columna
+    df["cod_dpto"] = df["cod_dpto"].str.strip().str.zfill(2)
+    df["anio"] = pd.to_numeric(df["anio"].str.strip(), errors="coerce").astype("Int64")
 
-def solo_digitos(serie: pd.Series) -> pd.Series:
-    return serie.astype("string").str.replace(r"\D", "", regex=True)
+    df["poblacion"] = pd.to_numeric(
+        df["poblacion"].astype("string").str.replace(r"[^\d]", "", regex=True), errors="coerce").astype("Int64")
 
+    # filtrar por 2015-2024 y total de población
+    ini, fin = cfg["period"]["start_year"], cfg["period"]["end_year"]
+    df = df[df["anio"].between(ini, fin)]
+    df = df[normalizar(df["area"]).eq("total")]
+    print(f"Tras filtrar {ini}-{fin} y área Total: {df.shape[0]} filas")
 
-def fuera_de_rango_a_nulo(serie: pd.Series, minimo, maximo) -> pd.Series:
-    """Valores imposibles -> nulo (se imputan despues, con justificacion)."""
-    return serie.where(serie.between(minimo, maximo))
+    # Unificar nombres por código
+    desconocidos = set(df["cod_dpto"]) - set(DEPARTAMENTOS)
+    if desconocidos:
+        raise ValueError(f"Códigos de departamento no reconocidos: {sorted(desconocidos)}")
+    df["departamento"] = df["cod_dpto"].map(DEPARTAMENTOS)
 
+    # Duplicados
+    clave = ["cod_dpto", "anio"]
+    dup = df[df.duplicated(clave, keep=False)]
+    if not dup.empty:
+        conflictos = dup.groupby(clave)["poblacion"].nunique()
+        if (conflictos > 1).any():
+            print("Aviso: hay duplicados con poblaciones distintas (se conserva el primero):")
+            print(conflictos[conflictos > 1])
+        df = df.drop_duplicates(clave, keep="first")
 
-# ---------- limpieza por fuente ----------
-# Escribe una funcion limpiar_<fuente> por cada fuente, DESPUES del EDA.
-# Orden: copia -> texto/categorias -> tipos -> reglas de negocio -> nulos -> duplicados.
+    df = df[["cod_dpto", "departamento", "anio", "poblacion"]]
+    df = df.sort_values(clave).reset_index(drop=True)
 
-def limpiar_generico(df: pd.DataFrame, config: dict) -> pd.DataFrame:
-    """Limpieza base que sirve para cualquier tabla. Amplia segun tu EDA."""
-    df_copia = df.copy()
-    filas = len(df_copia)
+    # Validaciones 
+    esperado = len(DEPARTAMENTOS) * (fin - ini + 1)
+    print(f"Filas finales: {len(df)} (esperadas: {esperado})")
+    if len(df) != esperado:
+        faltan = (
+            pd.MultiIndex.from_product([DEPARTAMENTOS, range(ini, fin + 1)])
+            .difference(pd.MultiIndex.from_frame(df[clave]))
+        )
+        print("Combinaciones (departamento, año) que faltan:", list(faltan)[:10])
+    nulos = df["poblacion"].isna().sum()
+    if nulos:
+        print(f"Aviso: {nulos} filas con población nula")
 
-    df_copia.columns = (df_copia.columns.str.strip().str.lower()
-                        .map(quitar_tildes).str.replace(r"\W+", "_", regex=True))
-    for col in df_copia.select_dtypes(include=["object", "string"]).columns:
-        df_copia[col] = df_copia[col].str.strip().replace("", pd.NA)
-
-    df_copia = df_copia.drop_duplicates()
-
-    logger.info(f"limpiar_generico: {filas} -> {len(df_copia)} filas")
-    return df_copia.reset_index(drop=True)
-
-
-LIMPIADORES = {
-    # "ventas": limpiar_ventas,
-}
-
-
-def limpiar_fuente(nombre: str, df: pd.DataFrame, config: dict) -> pd.DataFrame:
-    """Generica -> especifica de la fuente -> un registro por llave (al final,
-    cuando las variantes ya estan normalizadas)."""
-    df = limpiar_generico(df, config)
-    if nombre in LIMPIADORES:
-        df = LIMPIADORES[nombre](df, config)
-    key = config["sources"][nombre].get("key")
-    if key and key in df.columns:
-        antes = len(df)
-        df = df.drop_duplicates(subset=key, keep="first").reset_index(drop=True)
-        if len(df) < antes:
-            logger.warning(f"{nombre}: {antes - len(df)} registros repetidos por '{key}' eliminados")
     return df
+
+
+if __name__ == "__main__":
+    df = silver_poblacion()
+    salida = BASE_DIR / cfg["paths"]["silver_dir"] / "poblacion_silver.csv"
+    salida.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(salida, index=False, encoding="utf-8")
+    print(f"Guardado: {salida.relative_to(BASE_DIR)}")
+    print(df.head())
