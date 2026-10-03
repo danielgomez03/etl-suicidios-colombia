@@ -20,6 +20,11 @@ def clave_categoria(texto) -> str:
     return "".join(c for c in quitar_tildes(str(texto)).lower() if c.isalnum())
 
 
+def es_sin_info(serie: pd.Series) -> pd.Series:
+    """Detecta valores 'Sin información' (cualquier variante de escritura)."""
+    return serie.map(clave_categoria).eq("sininformacion")
+
+
 def normalizar_texto(serie: pd.Series) -> pd.Series:
     """Quita espacios sobrantes y pone Formato Titulo."""
     return serie.str.strip().str.replace(r"\s+", " ", regex=True).str.title()

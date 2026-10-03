@@ -1,9 +1,7 @@
 
-def extract_csv(ruta) -> pd.DataFrame:
-    df = pd.read_csv(BASE_DIR / ruta, dtype=str, encoding="utf-8")
-    return df
 import os
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 import requests
@@ -21,13 +19,19 @@ print(list(cfg.keys()))
 (BASE_DIR / cfg["paths"]["bronze_dir"]).mkdir(parents=True, exist_ok=True)
 
 
+def extract_csv(ruta) -> pd.DataFrame:
+    df = pd.read_csv(BASE_DIR / ruta, dtype=str, encoding="utf-8")
+    return df
+
+
 
 def extract_api(fuente):
     raw_path = fuente.get("raw_path") or fuente.get("output")
     if raw_path and fuente.get("use_cache", False) and (BASE_DIR / raw_path).exists():
         print(f"Usando copia local de bronze: {raw_path}")
         return extract_csv(raw_path)
-    token = os.getenv(fuente.get("token_env", ""))
+    token_env = fuente.get("token_env") or ""
+    token = os.getenv(token_env)
     headers = {"X-App-Token": token} if token else {}
     todos, offset = [], 0
     while True:
@@ -43,6 +47,20 @@ def extract_api(fuente):
         (BASE_DIR / raw_path).parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(BASE_DIR / raw_path, index=False, encoding="utf-8")
     return df
+
+
+def extract_api_socrata(url: str, batch_size: int = 50000, token: Optional[str] = None) -> pd.DataFrame:
+    """Wrapper para compatibilidad con tests: extrae de API Socrata por URL directa."""
+    fuente = {
+        "url": url,
+        "batch_size": batch_size,
+        "token_env": "SOCRATA_APP_TOKEN" if token else None,
+        "order": ":id",
+        "use_cache": False,
+    }
+    if token:
+        os.environ["SOCRATA_APP_TOKEN"] = token
+    return extract_api(fuente)
 
 
 
