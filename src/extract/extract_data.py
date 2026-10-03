@@ -1,107 +1,83 @@
 import os
+from pathlib import Path
 
 import pandas as pd
 import requests
+import yaml
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
 
-from src.utils import BASE_DIR, project_path, get_logger
+# Raíz del proyecto
+BASE_DIR = Path(__file__).resolve().parents[2]
 
-logger = get_logger(__name__)
+load_dotenv(BASE_DIR / ".env")
 
-
-def extract_csv(ruta) -> pd.DataFrame:
-    """Lee un CSV como texto (bronze no se toca)."""
-    df = pd.read_csv(project_path(ruta), dtype=str, encoding="utf-8")
-    logger.info(f"Extraido {ruta}: {df.shape[0]} filas, {df.shape[1]} columnas")
-    return df
+with open(BASE_DIR / "config" / "config.yaml", encoding="utf-8") as f:
+    cfg = yaml.safe_load(f)
+print(list(cfg.keys()))
+(BASE_DIR / cfg["paths"]["bronze_dir"]).mkdir(parents=True, exist_ok=True)
 
 
-def extract_excel(ruta, sheet=0, header_starts: str | None = None) -> pd.DataFrame:
-    """Lee una hoja de Excel como texto. Requiere openpyxl.
-    header_starts: texto de la primera celda del encabezado (ej. 'DP' en los archivos del
-    DANE). Se busca esa fila y se ignoran los titulos de arriba y las filas vacias."""
-    if header_starts is None:
-        df = pd.read_excel(project_path(ruta), sheet_name=sheet, dtype=str)
-    else:
-        crudo = pd.read_excel(project_path(ruta), sheet_name=sheet, header=None, dtype=str)
-        fila = crudo.index[crudo.iloc[:, 0].str.strip().eq(header_starts)]
-        if fila.empty:
-            raise ValueError(f"No se encontro la fila de encabezado '{header_starts}' en {ruta}")
-        df = crudo.loc[fila[0] + 1:].copy()
-        df.columns = crudo.loc[fila[0]].str.strip()
-        df = df.dropna(how="all").dropna(axis=1, how="all").reset_index(drop=True)
-    logger.info(f"Extraido {ruta}: {df.shape[0]} filas, {df.shape[1]} columnas")
-    return df
-
-
-def extract_sql(query: str) -> pd.DataFrame:
-    """Ejecuta una consulta en la BD de DATABASE_URL_SOURCE (.env) y cierra la conexion."""
-    load_dotenv(BASE_DIR / ".env")
-    engine = create_engine(os.environ["DATABASE_URL_SOURCE"])
-    try:
-        with engine.connect() as conn:
-            df = pd.read_sql(text(query), conn)
-    finally:
-        engine.dispose()
-    logger.info(f"Extraido SQL: {df.shape[0]} filas, {df.shape[1]} columnas")
-    return df.astype("string")
-
-
-def extract_api_socrata(url: str, token_env: str | None = None, batch_size: int = 50000,
-                        order: str = ":id", timeout: int = 60) -> pd.DataFrame:
-    """Descarga completa de una API Socrata (datos.gov.co) por lotes con $limit/$offset.
-    El token se lee del .env con el NOMBRE de la variable indicado en token_env."""
-    load_dotenv(BASE_DIR / ".env")
-    token = os.getenv(token_env) if token_env else None
+def extract_api(fuente):
+    """Descarga completa de la API Socrata"""
+    token = os.getenv(fuente["token_env"])
     headers = {"X-App-Token": token} if token else {}
-    if token_env and not token:
-        logger.warning(f"No se encontro {token_env} en .env: se descarga sin token (mas lento)")
+    if not token:
+        print(f"Aviso: no se encontró {fuente['token_env']} en .env")
 
     todos, offset = [], 0
     while True:
-        params = {"$limit": batch_size, "$offset": offset, "$order": order}
-        resp = requests.get(url, headers=headers, params=params, timeout=timeout)
+        params = {
+            "$limit": fuente["batch_size"],
+            "$offset": offset,
+            "$order": fuente["order"],
+        }
+        resp = requests.get(fuente["url"], headers=headers, params=params, timeout=60)
         resp.raise_for_status()
         lote = resp.json()
         if not lote:
             break
         todos.extend(lote)
         offset += len(lote)
-        logger.info(f"API {url}: {len(todos)} filas descargadas...")
-
-    df = pd.DataFrame(todos).astype("string")
-    logger.info(f"Extraido API: {df.shape[0]} filas, {df.shape[1]} columnas")
-    return df
+        print(f"Descargadas {len(todos)} filas...")
+    return pd.DataFrame(todos).astype("string")
 
 
-def extract_api(fuente: dict) -> pd.DataFrame:
-    """Fuente tipo API: guarda el crudo en bronze (raw_path) y, si use_cache es true
-    y el archivo ya existe, lo lee de ahi en vez de volver a descargar."""
-    raw_path = fuente.get("raw_path")
-    if raw_path and fuente.get("use_cache", False) and project_path(raw_path).exists():
-        logger.info(f"Usando copia local de bronze: {raw_path}")
-        return extract_csv(raw_path)
+def extract_excel(fuente):
+    ruta = BASE_DIR / fuente["path"]
+    if not ruta.exists():
+        disponibles = [p.name for p in ruta.parent.glob("*")]
+        raise FileNotFoundError(
+            f"No existe {ruta.name} en {ruta.parent}. Archivos encontrados: {disponibles}")
 
-    df = extract_api_socrata(fuente["url"], fuente.get("token_env"),
-                             fuente.get("batch_size", 50000), fuente.get("order", ":id"))
-    if raw_path:
-        ruta = project_path(raw_path)
-        ruta.parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(ruta, index=False, encoding="utf-8")
-        logger.info(f"Crudo guardado en bronze: {raw_path}")
-    return df
+    crudo = pd.read_excel(ruta, sheet_name=fuente["sheet"], header=None, dtype=str)
+
+    # encabezado
+    marca = fuente["header_starts"]
+    filas = crudo.index[crudo.iloc[:, 0].str.strip().eq(marca)]
+    if filas.empty:
+        raise ValueError(f"No se encontró la fila de encabezado '{marca}' en {ruta.name}")
+    inicio = filas[0]
+
+    df.columns = crudo.loc[inicio].str.strip()
+    df = df.dropna(how="all").dropna(axis=1, how="all")
+    es_dato = df.iloc[:, 0].str.strip().str.fullmatch(r"\d{1,2}", na=False)
+    print(f"Filas descartadas (notas/pies): {(~es_dato).sum()}")
+    df = df[es_dato]
+
+    return df.reset_index(drop=True)
 
 
-def extract_source(fuente: dict) -> pd.DataFrame:
-    """Elige el extractor segun el campo 'type' de la fuente en config.yaml."""
-    tipo = fuente["type"]
-    if tipo == "csv":
-        return extract_csv(fuente["path"])
-    if tipo == "excel":
-        return extract_excel(fuente["path"], fuente.get("sheet", 0), fuente.get("header_starts"))
-    if tipo == "sql":
-        return extract_sql(fuente["query"])
-    if tipo == "api":
-        return extract_api(fuente)
-    raise ValueError(f"Tipo de fuente no soportado: {tipo}")
+if __name__ == "__main__":
+    for nombre, fuente in cfg["sources"].items():
+        salida = BASE_DIR / fuente["output"]
+        salida.parent.mkdir(parents=True, exist_ok=True)
+
+        if fuente["type"] == "api":
+            df = extract_api(fuente)
+        elif fuente["type"] == "excel":
+            df = extract_excel(fuente)
+        else:
+            raise ValueError(f"Tipo de fuente no soportado: {fuente['type']}")
+
+        df.to_csv(salida, index=False, encoding="utf-8")
+        print(f"{nombre}: {df.shape} -> {salida.relative_to(BASE_DIR)}")
