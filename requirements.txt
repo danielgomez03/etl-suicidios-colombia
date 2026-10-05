@@ -14,3 +14,4 @@ nbclient
 nbformat
 python-calamine
 scipy
+psycopg2
