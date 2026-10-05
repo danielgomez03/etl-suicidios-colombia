@@ -40,7 +40,7 @@ Los Excel del DANE están en `data/bronze/` dentro del repositorio porque no se 
 
 - **Validación:** las reglas **obligatorias** (año en el periodo, sexo, grupo de edad y departamento válidos, etc.) rechazan el registro y documentan el motivo. Las reglas de **calidad** (municipio que cruza con el DANE, coherencia entre grupos de edad) solo marcan una alerta. "Sin información" es una categoría válida, no un error.
 - **Umbrales** (`config.yaml`, sección `thresholds`): ≥ 99,5 % de registros válidos, ≥ 99 % de códigos que cruzan con el DANE, consistencia ≥ 99 % y semáforo de completitud (95 % / 80 %).
-- **Privacidad:** minimización (10 variables sensibles fuera de gold), supresión de celdas con menos de 5 casos en el tablero y roles de acceso en PostgreSQL (`sql/roles_postgres.sql`).
+- **Privacidad:** minimización (10 variables sensibles fuera de gold), supresión de celdas con menos de 5 casos en el tablero y roles de acceso en PostgreSQL (`sql/roles_postgres.sql`, aplicados automáticamente en cada carga).
 
 ## Estructura
 
@@ -84,7 +84,9 @@ La base de destino se define con `DATABASE_URL` en el `.env`.
 
 - **Neon** (la que usa el grupo): PostgreSQL gratuito en la nube. La dirección de conexión (`postgresql://...neon.tech/suicidios_colombia?sslmode=require`) está en el `.env` del repositorio. Las tablas gold se reemplazan en cada ejecución.
 - **SQLite** (sin instalar nada, para pruebas locales): `DATABASE_URL=sqlite:///data/gold/suicidios.db`.
-- **PostgreSQL local** (permite control de acceso): `DATABASE_URL=postgresql+psycopg2://usuario:contrasena@localhost:5432/suicidios`. Después de correr `main.py`, ejecutar `psql -U postgres -d suicidios -f sql/roles_postgres.sql` para crear los roles `rol_tablero` y `rol_analista`.
+- **PostgreSQL local** (permite control de acceso): `DATABASE_URL=postgresql+psycopg2://usuario:contrasena@localhost:5432/suicidios`.
+
+Con PostgreSQL (Neon o local), al final de cada carga `main.py` crea la **llave primaria** de cada tabla gold y aplica los **roles de acceso** de `sql/roles_postgres.sql`: `rol_tablero` solo lee los agregados y `rol_analista` además lee el detalle por caso (`gold_suicidios`). Los roles no tienen contraseña; para dar acceso se crea un usuario y se le asigna el rol (ejemplo en el script). En SQLite este paso se omite.
 
 ## Ejecución
 

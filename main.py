@@ -167,6 +167,8 @@ def run_pipeline():
         logger.info("Iniciando carga de tablas Gold en la base de datos...")
         for nombre, df in tablas_gold.items():
             ld.load_to_database( df,nombre)
+        # Llaves primarias y roles de acceso (solo PostgreSQL / Neon)
+        ld.aplicar_llaves_y_roles(tablas_gold.keys())
         _etapa("Load", t)
 
 
