@@ -4,7 +4,7 @@ Etapas:
   1. EXTRACT   API de Medicina Legal + proyecciones DANE
   2. SILVER             limpieza por fuente + validación
   3. GOLD               tablas maestras, casos, tasas, tablero y KPIs
-  4. LOAD               CSV en data/gold + base de datos Neon
+  4. LOAD               CSV en data/gold + base de datos (Neon, segun DATABASE_URL del .env)
 """
 
 import time
@@ -162,9 +162,9 @@ def run_pipeline():
             ld.save_csv(df,gold_dir / f"{nombre}.csv")
         _etapa("Gold", t)
 
-        # 4. LOAD → NEON
+        # 4. LOAD → base de datos (Neon)
         t = time.perf_counter()
-        logger.info("Iniciando carga de tablas Gold en Neon...")
+        logger.info("Iniciando carga de tablas Gold en la base de datos...")
         for nombre, df in tablas_gold.items():
             ld.load_to_database( df,nombre)
         _etapa("Load", t)

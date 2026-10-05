@@ -22,7 +22,7 @@ Los Excel del DANE están en `data/bronze/` dentro del repositorio porque no se 
 | --- | --- | --- |
 | Bronze | `data/bronze/` | Datos crudos tal como llegan. **Nunca se modifican.** |
 | Silver | `data/silver/` | Una tabla limpia por fuente, más `rechazados_suicidios.csv` (registros que fallan una regla obligatoria, con su motivo) y `validaciones_suicidios.csv` (todas las fallas y alertas). |
-| Gold | `data/gold/` + base de datos | Tablas para el análisis y el tablero (abajo). |
+| Gold | `data/gold/` + base de datos (Neon) | Tablas para el análisis y el tablero (abajo). |
 
 `main.py` es el orquestador: **extract → silver (limpieza + validación) → gold → load**.
 
@@ -80,8 +80,11 @@ En `.env` va el token de datos.gov.co (`SOCRATA_APP_TOKEN`). Sin token la API ta
 
 ### Base de datos
 
-- **SQLite** (por defecto): `DATABASE_URL=sqlite:///data/gold/suicidios.db`. No requiere instalar nada.
-- **PostgreSQL** (recomendada; permite control de acceso): `DATABASE_URL=postgresql+psycopg2://usuario:contrasena@localhost:5432/suicidios`. Después de correr `main.py`, ejecutar `psql -U postgres -d suicidios -f sql/roles_postgres.sql` para crear los roles `rol_tablero` y `rol_analista`.
+La base de destino se define con `DATABASE_URL` en el `.env`.
+
+- **Neon** (la que usa el grupo): PostgreSQL gratuito en la nube. La dirección de conexión (`postgresql://...neon.tech/suicidios_colombia?sslmode=require`) está en el `.env` del repositorio. Las tablas gold se reemplazan en cada ejecución.
+- **SQLite** (sin instalar nada, para pruebas locales): `DATABASE_URL=sqlite:///data/gold/suicidios.db`.
+- **PostgreSQL local** (permite control de acceso): `DATABASE_URL=postgresql+psycopg2://usuario:contrasena@localhost:5432/suicidios`. Después de correr `main.py`, ejecutar `psql -U postgres -d suicidios -f sql/roles_postgres.sql` para crear los roles `rol_tablero` y `rol_analista`.
 
 ## Ejecución
 
