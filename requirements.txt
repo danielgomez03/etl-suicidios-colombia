@@ -15,3 +15,4 @@ nbformat
 python-calamine
 scipy
 psycopg2
+jinja2
