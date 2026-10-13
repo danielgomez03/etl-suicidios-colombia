@@ -1,5 +1,7 @@
 # Presuntos Suicidios en Colombia 2015–2024 — ETL
 
+[![Pipeline ETL y pruebas](https://github.com/danielgomez03/etl-suicidios-colombia/actions/workflows/pipeline.yml/badge.svg)](https://github.com/danielgomez03/etl-suicidios-colombia/actions/workflows/pipeline.yml)
+
 Pipeline ETL en Python con **arquitectura medallón** (bronze → silver → gold) sobre los registros de presuntos suicidios de Medicina Legal y las proyecciones de población del DANE. Produce la **tasa de mortalidad por presunto suicidio** a nivel nacional, departamental (con foco en el Valle del Cauca) y municipal, junto con indicadores de calidad del dato.
 
 **Autores:** Ana María Toro · Ana Sofía Perhueza · Daniel Gómez Sermeño · Daniel Steven Colmenares
@@ -41,6 +43,35 @@ Los Excel del DANE están en `data/bronze/` dentro del repositorio porque no se 
 - **Validación:** las reglas **obligatorias** (año en el periodo, sexo, grupo de edad y departamento válidos, etc.) rechazan el registro y documentan el motivo. Las reglas de **calidad** (municipio que cruza con el DANE, coherencia entre grupos de edad) solo marcan una alerta. "Sin información" es una categoría válida, no un error.
 - **Umbrales** (`config.yaml`, sección `thresholds`): ≥ 99,5 % de registros válidos, ≥ 99 % de códigos que cruzan con el DANE, consistencia ≥ 99 % y semáforo de completitud (95 % / 80 %).
 - **Privacidad:** minimización (10 variables sensibles fuera de gold), supresión de celdas con menos de 5 casos en el tablero y roles de acceso en PostgreSQL (`sql/roles_postgres.sql`, aplicados automáticamente en cada carga).
+- **Limitaciones de los datos:** la razón del suicidio solo está registrada en el 47 % de los casos y la pertenencia étnica no se registró antes de 2018. El informe (sección 9) cuantifica estas limitaciones y explica qué conclusiones no se pueden sostener.
+
+## Base de datos: integridad y control de acceso
+
+En PostgreSQL (Neon o local), cada carga reemplaza las tablas y luego:
+
+1. Crea la **llave primaria** de cada tabla y las **llaves foráneas** (integridad referencial): cada caso apunta a un departamento, un municipio y un grupo de edad que existen en las tablas maestras; los municipios apuntan a su departamento y las tasas, a su grupo de edad. Las tablas maestras de la base incluyen un miembro "Sin información" para los 4 casos sin departamento ni municipio registrados.
+2. Aplica los **roles de acceso** de `sql/roles_postgres.sql`: `rol_tablero` solo lee los agregados y `rol_analista` además lee el detalle por caso (`gold_suicidios`).
+3. **Verifica en la base** que todas las llaves y permisos quedaron aplicados (26 comprobaciones). Si alguna falla, el ETL se detiene con error. El resultado queda en `data/gold/verificacion_base.csv`.
+
+La tasa y el agregado del tablero no llevan llave foránea al territorio porque su columna `codigo` depende del nivel (nacional, departamento o municipio); su consistencia la comprueban las pruebas.
+
+## Seguridad de las credenciales
+
+- Las credenciales (contraseña de la base y token de la API) van **solo** en el archivo `.env` de cada persona. Ese archivo está en `.gitignore` y **no se sube** al repositorio; en el repositorio solo está `.env.example`, sin valores reales.
+- En GitHub Actions el token se guarda como **secreto del repositorio** (`SOCRATA_APP_TOKEN`), nunca en el código.
+- La prueba `tests/test_seguridad.py` falla si alguien vuelve a subir el `.env` o un archivo con una contraseña o un token.
+- Si una credencial llega a publicarse, borrarla del repositorio no basta (queda en el historial de git): hay que **cambiarla** en el servicio (Neon, datos.gov.co).
+
+## Pruebas automáticas
+
+En cada cambio, [GitHub Actions](https://github.com/danielgomez03/etl-suicidios-colombia/actions/workflows/pipeline.yml) levanta un PostgreSQL limpio, ejecuta el ETL completo (desde la API hasta la base), corre **todas las pruebas** y ejecuta el informe. El resumen de cada ejecución muestra los KPI, la verificación de la base y el resultado de las pruebas; los reportes quedan como archivos descargables.
+
+| Archivo | Qué comprueba |
+|---|---|
+| `tests/test_extract.py`, `test_quality.py`, `test_transform.py` | Lectura de las fuentes, llaves únicas y reglas de limpieza |
+| `tests/test_gold.py` | Reglas de negocio y cifras de control (tasas nacionales, Tabla 4, supresión, minimización) |
+| `tests/test_base_datos.py` | Llaves primarias y foráneas, que la base rechace códigos inexistentes e id repetidos, permisos por rol y que `rol_tablero` no pueda leer el detalle |
+| `tests/test_seguridad.py` | Que no haya credenciales en el repositorio |
 
 ## Estructura
 
@@ -54,16 +85,17 @@ Los Excel del DANE están en `data/bronze/` dentro del repositorio porque no se 
 │   ├── informe.ipynb             # informe: OKR, KPIs, preguntas de negocio, correcciones
 │   └── conclusiones.ipynb
 ├── sql/roles_postgres.sql        # control de acceso en PostgreSQL
+├── .github/workflows/pipeline.yml # ejecucion completa y pruebas en cada cambio
 ├── src/
 │   ├── utils.py                  # config, rutas relativas y logger
 │   ├── extract/extract_data.py   # API Socrata, Excel del DANE y CSV
 │   ├── transform/clean_data.py   # limpieza por fuente (silver)
 │   ├── transform/validate.py     # reglas de validacion y rechazados (KPI 1)
 │   ├── transform/gold_data.py    # tablas maestras, tasas, tablero y KPIs (gold)
-│   └── load/load_data.py         # CSV y carga a base de datos
+│   └── load/load_data.py         # CSV, carga, llaves, roles y verificacion de la base
 ├── tests/
 ├── main.py                       # orquestador (el unico que ejecuta)
-└── .env.example                  # variables de entorno
+└── .env.example                  # plantilla de variables de entorno (sin credenciales)
 ```
 
 ## Instalación (Windows / PowerShell)
@@ -73,20 +105,20 @@ py -m venv venv
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-Copy-Item .env.example .env      # si no existe ya un .env
+Copy-Item .env.example .env      # y luego poner los valores reales en .env
 ```
 
-En `.env` va el token de datos.gov.co (`SOCRATA_APP_TOKEN`). Sin token la API también funciona, pero es más lenta.
+En `.env` van el token de datos.gov.co (`SOCRATA_APP_TOKEN`) y la dirección de la base (`DATABASE_URL`). Sin token la API también funciona, pero es más lenta. **Nunca subas el `.env` al repositorio.**
 
 ### Base de datos
 
-La base de destino se define con `DATABASE_URL` en el `.env`.
+La base de destino se define con `DATABASE_URL` en el `.env`. Si no está definida, se usa SQLite (`data/gold/suicidios.db`).
 
-- **Neon** (la que usa el grupo): PostgreSQL gratuito en la nube. La dirección de conexión (`postgresql://...neon.tech/suicidios_colombia?sslmode=require`) está en el `.env` del repositorio. Las tablas gold se reemplazan en cada ejecución.
+- **Neon** (la que usa el grupo): PostgreSQL gratuito en la nube. La dirección de conexión (`postgresql://usuario:<contraseña>@...neon.tech/suicidios_colombia?sslmode=require`) se pide al equipo y se pone en el `.env` local. Las tablas gold se reemplazan en cada ejecución.
 - **SQLite** (sin instalar nada, para pruebas locales): `DATABASE_URL=sqlite:///data/gold/suicidios.db`.
 - **PostgreSQL local** (permite control de acceso): `DATABASE_URL=postgresql+psycopg2://usuario:contrasena@localhost:5432/suicidios`.
 
-Con PostgreSQL (Neon o local), al final de cada carga `main.py` crea la **llave primaria** de cada tabla gold y aplica los **roles de acceso** de `sql/roles_postgres.sql`: `rol_tablero` solo lee los agregados y `rol_analista` además lee el detalle por caso (`gold_suicidios`). Los roles no tienen contraseña; para dar acceso se crea un usuario y se le asigna el rol (ejemplo en el script). En SQLite este paso se omite.
+Con PostgreSQL se aplican y verifican las llaves y los roles (ver *Base de datos: integridad y control de acceso*). Los roles no tienen contraseña; para dar acceso se crea un usuario y se le asigna el rol (ejemplo en el script). En SQLite este paso se omite.
 
 ## Ejecución
 
@@ -94,7 +126,7 @@ Desde la raíz del proyecto y con el `venv` activo:
 
 ```powershell
 python main.py            # corre el ETL completo (~80 s; la mayor parte es leer los Excel municipales)
-python -m pytest -v       # pruebas
+python -m pytest -v       # pruebas (las de llaves y roles corren si DATABASE_URL es PostgreSQL)
 ```
 
 Después se puede abrir `notebooks/informe.ipynb`.

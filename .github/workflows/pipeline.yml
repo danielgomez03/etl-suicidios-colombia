@@ -1,0 +1,105 @@
+# Ejecucion completa y verificable del proyecto en cada cambio:
+#   1. levanta un PostgreSQL limpio (igual que Neon),
+#   2. corre el ETL completo (python main.py): API -> bronze -> silver -> gold -> base,
+#   3. corre todas las pruebas automaticas, incluidas las de llaves y permisos en la base,
+#   4. ejecuta el informe y publica el resumen de KPIs, la verificacion de la base y los reportes.
+name: Pipeline ETL y pruebas
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  etl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: suicidios
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+
+    env:
+      # Base temporal de esta ejecucion (se borra al terminar); no es una credencial real
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/suicidios
+      # Opcional: el token se guarda como secreto del repositorio, nunca en el codigo
+      SOCRATA_APP_TOKEN: ${{ secrets.SOCRATA_APP_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependencias
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq libpq-dev
+          pip install -r requirements.txt tabulate
+
+      - name: Ejecutar el ETL completo
+        run: python main.py
+
+      - name: Ejecutar las pruebas automaticas
+        run: python -m pytest -v -rs --junitxml=reporte-pruebas.xml
+
+      - name: Ejecutar el informe
+        run: |
+          python - <<'EOF'
+          import nbformat
+          from nbclient import NotebookClient
+          nb = nbformat.read("notebooks/informe.ipynb", as_version=4)
+          NotebookClient(nb, timeout=600, kernel_name="python3",
+                         resources={"metadata": {"path": "notebooks"}}).execute()
+          nbformat.write(nb, "informe-ejecutado.ipynb")
+          print("Informe ejecutado sin errores")
+          EOF
+
+      - name: Resumen de la ejecucion
+        if: always()
+        run: |
+          python - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import pathlib
+          import xml.etree.ElementTree as ET
+          import pandas as pd
+          print("## Pipeline ETL — presuntos suicidios en Colombia 2015-2024\n")
+          r = pathlib.Path("reporte-pruebas.xml")
+          if r.exists():
+              s = ET.parse(r).getroot()
+              s = s if s.tag == "testsuite" else s.find("testsuite")
+              t, f, e, k = (int(s.get(x, 0)) for x in ("tests", "failures", "errors", "skipped"))
+              print(f"**Pruebas:** {t - f - e - k} aprobadas, {f + e} fallidas, {k} omitidas de {t}\n")
+          k = pathlib.Path("data/gold/gold_kpi_calidad.csv")
+          if k.exists():
+              d = pd.read_csv(k)
+              d = d[d["indicador"].isin(["KR1", "KR2"]) | d["estado"].notna()]
+              print("### KR y KPI de esta ejecucion\n")
+              print(d[["indicador", "dimension", "valor", "unidad", "meta", "estado"]].fillna("").to_markdown(index=False))
+          v = pathlib.Path("data/gold/verificacion_base.csv")
+          if v.exists():
+              d = pd.read_csv(v)
+              print(f"\n### Verificacion de la base: {int(d['cumple'].sum())}/{len(d)} comprobaciones cumplen\n")
+              print(d.to_markdown(index=False))
+          EOF
+
+      - name: Guardar reportes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reportes-etl
+          path: |
+            reporte-pruebas.xml
+            logs/etl_log.txt
+            data/gold/gold_kpi_calidad.csv
+            data/gold/verificacion_base.csv
+            informe-ejecutado.ipynb
+          if-no-files-found: ignore

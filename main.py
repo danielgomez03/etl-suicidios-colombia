@@ -165,10 +165,17 @@ def run_pipeline():
         # 4. LOAD → base de datos (Neon)
         t = time.perf_counter()
         logger.info("Iniciando carga de tablas Gold en la base de datos...")
-        for nombre, df in tablas_gold.items():
+        # Las tablas maestras de la base llevan el miembro "Sin informacion" (llaves foraneas)
+        tablas_base = ld.completar_dimensiones(tablas_gold)
+        ld.preparar_base(tablas_base.keys())
+        for nombre, df in tablas_base.items():
             ld.load_to_database( df,nombre)
-        # Llaves primarias y roles de acceso (solo PostgreSQL / Neon)
-        ld.aplicar_llaves_y_roles(tablas_gold.keys())
+        # Llaves primarias, foraneas y roles de acceso (solo PostgreSQL / Neon)
+        ld.aplicar_llaves_y_roles(tablas_base.keys())
+        # Comprobar en la base que todo quedo aplicado; si algo falta, el ETL falla
+        verificacion = ld.verificar_base(tablas_base.keys())
+        if not verificacion.empty:
+            ld.save_csv(verificacion, gold_dir / "verificacion_base.csv")
         _etapa("Load", t)
 
 
