@@ -75,28 +75,40 @@ jobs:
       - name: Resumen de la ejecucion
         if: always()
         run: |
-          python - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
-          import pathlib
+          python - <<'EOF'
+          import contextlib, os, pathlib
           import xml.etree.ElementTree as ET
           import pandas as pd
-          print("## Pipeline ETL — presuntos suicidios en Colombia 2015-2024\n")
+          resumen = open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8")
+          with contextlib.redirect_stdout(resumen):
+           print("## Pipeline ETL — presuntos suicidios en Colombia 2015-2024\n")
+           r = pathlib.Path("reporte-pruebas.xml")
+           if r.exists():
+               s = ET.parse(r).getroot()
+               s = s if s.tag == "testsuite" else s.find("testsuite")
+               t, f, e, k = (int(s.get(x, 0)) for x in ("tests", "failures", "errors", "skipped"))
+               print(f"**Pruebas:** {t - f - e - k} aprobadas, {f + e} fallidas, {k} omitidas de {t}\n")
+           k = pathlib.Path("data/gold/gold_kpi_calidad.csv")
+           if k.exists():
+               d = pd.read_csv(k)
+               d = d[d["indicador"].isin(["KR1", "KR2"]) | d["estado"].notna()]
+               print("### KR y KPI de esta ejecucion\n")
+               print(d[["indicador", "dimension", "valor", "unidad", "meta", "estado"]].fillna("").to_markdown(index=False))
+           v = pathlib.Path("data/gold/verificacion_base.csv")
+           if v.exists():
+               d = pd.read_csv(v)
+               print(f"\n### Verificacion de la base: {int(d['cumple'].sum())}/{len(d)} comprobaciones cumplen\n")
+               print(d.to_markdown(index=False))
           r = pathlib.Path("reporte-pruebas.xml")
           if r.exists():
               s = ET.parse(r).getroot()
               s = s if s.tag == "testsuite" else s.find("testsuite")
               t, f, e, k = (int(s.get(x, 0)) for x in ("tests", "failures", "errors", "skipped"))
-              print(f"**Pruebas:** {t - f - e - k} aprobadas, {f + e} fallidas, {k} omitidas de {t}\n")
-          k = pathlib.Path("data/gold/gold_kpi_calidad.csv")
-          if k.exists():
-              d = pd.read_csv(k)
-              d = d[d["indicador"].isin(["KR1", "KR2"]) | d["estado"].notna()]
-              print("### KR y KPI de esta ejecucion\n")
-              print(d[["indicador", "dimension", "valor", "unidad", "meta", "estado"]].fillna("").to_markdown(index=False))
+              print(f"::notice title=Pruebas::{t - f - e - k} aprobadas, {f + e} fallidas, {k} omitidas de {t}")
           v = pathlib.Path("data/gold/verificacion_base.csv")
           if v.exists():
               d = pd.read_csv(v)
-              print(f"\n### Verificacion de la base: {int(d['cumple'].sum())}/{len(d)} comprobaciones cumplen\n")
-              print(d.to_markdown(index=False))
+              print(f"::notice title=Base de datos::{int(d['cumple'].sum())}/{len(d)} comprobaciones de llaves y permisos cumplen")
           EOF
 
       - name: Guardar reportes
