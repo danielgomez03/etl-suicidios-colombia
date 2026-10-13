@@ -54,13 +54,21 @@ jobs:
 
       - name: Ejecutar el informe
         run: |
+          python -m ipykernel install --user --name python3
           python - <<'EOF'
+          import sys
           import nbformat
           from nbclient import NotebookClient
           nb = nbformat.read("notebooks/informe.ipynb", as_version=4)
-          NotebookClient(nb, timeout=600, kernel_name="python3",
-                         resources={"metadata": {"path": "notebooks"}}).execute()
-          nbformat.write(nb, "informe-ejecutado.ipynb")
+          try:
+              NotebookClient(nb, timeout=600, kernel_name="python3",
+                             resources={"metadata": {"path": "notebooks"}}).execute()
+          except Exception as error:
+              mensaje = " ".join(str(error).split())[-900:]
+              print(f"::error title=Informe::{type(error).__name__}: {mensaje}")
+              sys.exit(1)
+          finally:
+              nbformat.write(nb, "informe-ejecutado.ipynb")
           print("Informe ejecutado sin errores")
           EOF
 
